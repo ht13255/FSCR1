@@ -34,9 +34,8 @@ def fetch_page_content(url):
             response.raise_for_status()
             return response.text
         except requests.exceptions.RequestException as e:
-            # st.warning은 함수 내부에서 호출하지 않고, 상위 레벨에서 처리
-            return None
-    return None
+            return None, str(e)  # 에러 메시지 반환
+    return None, "Unknown error"
 
 
 def clean_text(text):
@@ -72,14 +71,14 @@ def extract_internal_links(base_url, html_content):
 
 def scrape_page_content(url):
     """URL에서 텍스트 콘텐츠를 크롤링."""
-    html_content = fetch_page_content(url)
+    html_content, error = fetch_page_content(url)
     if not html_content:
-        return None
+        return None, error
 
     soup = BeautifulSoup(html_content, 'html.parser')
     title = soup.title.string if soup.title else "No Title"
     body = clean_text(soup.get_text(separator='\n').strip())
-    return {"url": url, "title": title, "content": body}
+    return {"url": url, "title": title, "content": body}, None
 
 
 def crawl_site(base_url, max_pages=100000000):
@@ -87,29 +86,33 @@ def crawl_site(base_url, max_pages=100000000):
     visited = set()
     to_visit = [base_url]
     scraped_data = []
+    errors = []
 
     while to_visit and len(scraped_data) < max_pages:
         current_url = to_visit.pop(0)
         if current_url in visited:
             continue
 
-        st.info(f"크롤링 중: {current_url}")
         visited.add(current_url)
 
         # 현재 페이지 크롤링
-        page_content = scrape_page_content(current_url)
+        page_content, error = scrape_page_content(current_url)
+        if error:
+            errors.append((current_url, error))
+            continue
+
         if page_content:
             scraped_data.append(page_content)
 
             # 현재 페이지에서 내부 링크 추출
-            html_content = fetch_page_content(current_url)
+            html_content, _ = fetch_page_content(current_url)
             if html_content:
                 new_links = extract_internal_links(base_url, html_content)
                 for link in new_links:
                     if link not in visited and link not in to_visit:
                         to_visit.append(link)
 
-    return scraped_data
+    return scraped_data, errors
 
 
 def save_to_txt(scraped_data, output_path):
@@ -129,7 +132,7 @@ def save_to_json(scraped_data, output_path):
 
 
 # Streamlit App 시작
-st.title("내부 링크만 크롤링 및 데이터 저장 (최대 100,000개)")
+st.title("내부 링크만 크롤링 및 데이터 저장")
 
 # 입력
 base_url = st.text_input("기본 URL을 입력하세요", value="https://example.com")
@@ -142,7 +145,7 @@ if st.button("크롤링 시작"):
         st.info("크롤링을 시작합니다. 잠시만 기다려주세요...")
 
         # 사이트 전체 크롤링
-        scraped_data = crawl_site(base_url, max_pages=max_pages)
+        scraped_data, errors = crawl_site(base_url, max_pages=max_pages)
 
         if not scraped_data:
             st.warning("크롤링된 데이터가 없습니다.")
@@ -160,3 +163,9 @@ if st.button("크롤링 시작"):
             st.write("크롤링된 데이터 (최대 5개 미리보기):", scraped_data[:5])
             st.download_button("TXT 파일 다운로드", open(txt_path, "rb"), "scraped_data.txt")
             st.download_button("JSON 파일 다운로드", open(json_path, "rb"), "scraped_data.json")
+
+        # 에러 로그 출력
+        if errors:
+            st.warning(f"크롤링 중 {len(errors)}개의 URL에서 오류가 발생했습니다.")
+            st.write("오류 목록:")
+            st.write(errors)
