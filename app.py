@@ -1,3 +1,5 @@
+# 파일명: streamlit_web_scraper.py
+
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
@@ -5,6 +7,7 @@ import json
 import os
 from time import sleep
 from collections import Counter
+from urllib.parse import urlparse
 
 # User-Agent 설정
 HEADERS = {
@@ -16,6 +19,16 @@ HEADERS = {
 
 # 최대 재시도 횟수
 MAX_RETRIES = 3
+
+# 제외할 도메인 패턴 (SNS 등)
+EXCLUDED_DOMAINS = [
+    "instagram.com",
+    "twitter.com",
+    "facebook.com",
+    "linkedin.com",
+    "pinterest.com",
+    "youtube.com"
+]
 
 def fetch_page_content(url):
     """주어진 URL의 HTML 콘텐츠를 가져오는 함수."""
@@ -72,6 +85,25 @@ def extract_all_links(soup):
     links = [a.get('href') for a in soup.find_all('a', href=True)]
     return links
 
+def filter_links(base_url, links):
+    """SNS 및 외부 링크를 제외한 내부 링크만 필터링."""
+    filtered_links = []
+    base_domain = urlparse(base_url).netloc
+
+    for link in links:
+        parsed_link = urlparse(link)
+        # 상대 링크 처리
+        if not parsed_link.netloc:
+            filtered_links.append(link)
+        # 동일 도메인 확인
+        elif parsed_link.netloc == base_domain:
+            filtered_links.append(link)
+        # SNS 및 제외 대상 확인
+        elif not any(excluded in parsed_link.netloc for excluded in EXCLUDED_DOMAINS):
+            filtered_links.append(link)
+    
+    return filtered_links
+
 def scrape_content_from_links(base_url, links):
     """주어진 링크에서 텍스트 콘텐츠를 추출."""
     scraped_data = []
@@ -102,7 +134,7 @@ def save_to_json(scraped_data, output_path):
         json.dump(scraped_data, file, ensure_ascii=False, indent=4)
 
 # Streamlit App 시작
-st.title("범용 웹 크롤링 및 데이터 저장")
+st.title("SNS 제외 웹 크롤링 및 데이터 저장")
 
 # 입력
 base_url = st.text_input("기본 URL을 입력하세요", value="https://example.com")
@@ -127,9 +159,12 @@ if st.button("크롤링 시작"):
         st.warning("자동 선택된 구조에서 링크를 찾을 수 없습니다. 모든 링크를 수집합니다.")
         links = extract_all_links(soup)
 
+    # SNS 및 외부 링크 제외
+    links = filter_links(base_url, links)
+
     # 중복 제거 및 정리
     links = list(set(links))
-    st.write(f"**추출된 링크 수:** {len(links)}")
+    st.write(f"**필터링된 링크 수:** {len(links)}")
 
     # 데이터 크롤링
     scraped_data = scrape_content_from_links(base_url, links)
