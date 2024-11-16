@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import json
 import os
 from time import sleep
+from collections import Counter
 
 # User-Agent 설정
 HEADERS = {
@@ -29,15 +30,26 @@ def fetch_page_content(url):
     st.error("최대 재시도 횟수를 초과했습니다.")
     return None
 
-def scrape_links(base_url, css_selector):
-    """주어진 URL의 페이지에서 지정된 CSS 선택자로 링크를 수집."""
-    page_content = fetch_page_content(base_url)
-    if not page_content:
-        return []
+def analyze_page_structure(html_content):
+    """HTML 페이지에서 태그, 클래스, ID를 분석하여 선택자 옵션을 제공."""
+    soup = BeautifulSoup(html_content, 'html.parser')
     
-    soup = BeautifulSoup(page_content, 'html.parser')
-    links = [a['href'] for a in soup.select(css_selector) if 'href' in a.attrs]
-    return links
+    # 태그 카운트
+    tags = [tag.name for tag in soup.find_all()]
+    tag_count = Counter(tags)
+
+    # 클래스 카운트
+    classes = [
+        class_name for tag in soup.find_all(class_=True)
+        for class_name in tag.get('class', [])
+    ]
+    class_count = Counter(classes)
+
+    # ID 카운트
+    ids = [tag.get('id') for tag in soup.find_all(id=True)]
+    id_count = Counter(ids)
+
+    return tag_count, class_count, id_count
 
 def scrape_content_from_links(base_url, links):
     """주어진 링크에서 텍스트 콘텐츠를 추출."""
@@ -73,38 +85,69 @@ st.title("웹 크롤링 및 데이터 저장")
 
 # 입력
 base_url = st.text_input("기본 URL을 입력하세요", value="https://example.com")
-link_selector = st.text_input("크롤링할 링크의 CSS 선택자를 입력하세요", value="a")  # 기본은 모든 링크
 
-if st.button("크롤링 시작"):
-    # robots.txt 확인 메시지 추가
-    robots_url = f"{base_url.rstrip('/')}/robots.txt"
-    try:
-        robots_response = requests.get(robots_url, headers=HEADERS)
-        if robots_response.status_code == 200:
-            st.write("robots.txt 내용:\n", robots_response.text)
-            if "Disallow: /" in robots_response.text:
-                st.warning("크롤링이 제한된 사이트일 수 있습니다.")
-    except:
-        st.warning("robots.txt를 확인할 수 없습니다.")
-
-    # 링크 수집
-    links = scrape_links(base_url, link_selector)
-    if not links:
-        st.error("링크를 찾을 수 없습니다. CSS 선택자를 확인하세요.")
+if st.button("분석 시작"):
+    # 페이지 콘텐츠 가져오기
+    main_page_content = fetch_page_content(base_url)
+    if not main_page_content:
         st.stop()
 
-    # 데이터 크롤링
-    scraped_data = scrape_content_from_links(base_url, links)
+    # HTML 구조 분석
+    tag_count, class_count, id_count = analyze_page_structure(main_page_content)
 
-    # 데이터 저장
-    os.makedirs("output", exist_ok=True)
-    txt_path = os.path.join("output", "scraped_data.txt")
-    json_path = os.path.join("output", "scraped_data.json")
-    save_to_txt(scraped_data, txt_path)
-    save_to_json(scraped_data, json_path)
+    # 분석 결과 표시
+    st.write("**태그 빈도수:**")
+    st.write(dict(tag_count))
 
-    # 결과 표시
-    st.success("크롤링 완료!")
-    st.write("크롤링된 데이터 (최대 5개 미리보기):", scraped_data[:5])
-    st.download_button("TXT 파일 다운로드", open(txt_path, "rb"), "scraped_data.txt")
-    st.download_button("JSON 파일 다운로드", open(json_path, "rb"), "scraped_data.json")
+    st.write("**클래스 빈도수 (최대 10개):**")
+    st.write(dict(class_count.most_common(10)))
+
+    st.write("**ID 빈도수 (최대 10개):**")
+    st.write(dict(id_count.most_common(10)))
+
+    # CSS 선택자 옵션 제공
+    st.subheader("크롤링할 CSS 선택자를 선택하세요")
+    css_tag = st.selectbox("태그 선택", [""] + list(tag_count.keys()))
+    css_class = st.selectbox("클래스 선택 (선택 시 .classname 형식으로 자동 처리)", [""] + list(class_count.keys()))
+    css_id = st.selectbox("ID 선택 (선택 시 #id 형식으로 자동 처리)", [""] + list(id_count.keys()))
+
+    # CSS 선택자 생성
+    css_selector = ""
+    if css_tag:
+        css_selector = css_tag
+    if css_class:
+        css_selector += f".{css_class}" if css_selector else f".{css_class}"
+    if css_id:
+        css_selector += f"#{css_id}" if css_selector else f"#{css_id}"
+
+    st.write(f"**생성된 CSS 선택자:** `{css_selector}`")
+
+    # 크롤링 시작
+    if st.button("크롤링 시작"):
+        if not css_selector:
+            st.error("CSS 선택자를 선택하거나 직접 입력하세요.")
+            st.stop()
+
+        # 링크 수집
+        soup = BeautifulSoup(main_page_content, 'html.parser')
+        links = [a['href'] for a in soup.select(css_selector) if 'href' in a.attrs]
+
+        if not links:
+            st.error("선택자에 해당하는 링크가 없습니다. 선택자를 확인하세요.")
+            st.stop()
+
+        # 데이터 크롤링
+        scraped_data = scrape_content_from_links(base_url, links)
+
+        # 데이터 저장
+        os.makedirs("output", exist_ok=True)
+        txt_path = os.path.join("output", "scraped_data.txt")
+        json_path = os.path.join("output", "scraped_data.json")
+        save_to_txt(scraped_data, txt_path)
+        save_to_json(scraped_data, json_path)
+
+        # 결과 표시
+        st.success("크롤링 완료!")
+        st.write("크롤링된 데이터 (최대 5개 미리보기):", scraped_data[:5])
+        st.download_button("TXT 파일 다운로드", open(txt_path, "rb"), "scraped_data.txt")
+        st.download_button("JSON 파일 다운로드", open(json_path, "rb"), "scraped_data.json")
