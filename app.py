@@ -50,8 +50,8 @@ def clean_text(text):
     return text.strip()
 
 
-def extract_links(base_url, html_content):
-    """HTML 페이지에서 링크를 추출하고 외부/SNS/광고 링크를 필터링."""
+def extract_internal_links(base_url, html_content):
+    """HTML 페이지에서 내부 링크만 추출."""
     soup = BeautifulSoup(html_content, 'html.parser')
     base_domain = urlparse(base_url).netloc
 
@@ -61,11 +61,8 @@ def extract_links(base_url, html_content):
         full_url = urljoin(base_url, href)
         parsed_url = urlparse(full_url)
 
-        # 링크 필터링
-        if parsed_url.netloc and (
-            parsed_url.netloc == base_domain or
-            not any(excluded in parsed_url.netloc for excluded in EXCLUDED_DOMAINS)
-        ):
+        # 내부 링크만 필터링
+        if parsed_url.netloc == base_domain and not any(excluded in parsed_url.netloc for excluded in EXCLUDED_DOMAINS):
             all_links.append(full_url)
 
     # 중복 제거
@@ -103,8 +100,8 @@ def crawl_site(base_url, max_pages=100):
         if page_content:
             scraped_data.append(page_content)
 
-            # 현재 페이지에서 링크 추출
-            new_links = extract_links(base_url, fetch_page_content(current_url))
+            # 현재 페이지에서 내부 링크 추출
+            new_links = extract_internal_links(base_url, fetch_page_content(current_url))
             for link in new_links:
                 if link not in visited and link not in to_visit:
                     to_visit.append(link)
@@ -129,7 +126,7 @@ def save_to_json(scraped_data, output_path):
 
 
 # Streamlit App 시작
-st.title("사이트 전체 크롤링 및 데이터 저장")
+st.title("내부 링크만 크롤링 및 데이터 저장")
 
 # 입력
 base_url = st.text_input("기본 URL을 입력하세요", value="https://example.com")
