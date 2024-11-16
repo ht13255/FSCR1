@@ -1,20 +1,50 @@
-# 파일: streamlit_web_scraper.py
-
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 import json
 import os
+from time import sleep
+
+# User-Agent와 세션 설정
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36"
+    )
+}
+SESSION = requests.Session()
+SESSION.headers.update(HEADERS)
+
+# 최대 재시도 횟수
+MAX_RETRIES = 3
+
+
+def check_robots_txt(base_url):
+    """robots.txt를 확인하여 크롤링 가능 여부를 검사."""
+    robots_url = f"{base_url.rstrip('/')}/robots.txt"
+    try:
+        response = SESSION.get(robots_url)
+        response.raise_for_status()
+        st.write("robots.txt 내용:\n", response.text)
+        if "Disallow: /" in response.text:
+            st.warning("이 사이트는 크롤링이 금지되어 있습니다.")
+    except requests.exceptions.RequestException:
+        st.warning("robots.txt를 확인할 수 없습니다.")
+
 
 def fetch_page_content(url):
-    """주어진 URL의 HTML 콘텐츠를 가져오는 함수."""
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        return response.text
-    except requests.exceptions.RequestException as e:
-        st.error(f"URL 요청 실패: {e}")
-        return None
+    """주어진 URL의 HTML 콘텐츠를 가져오는 함수 (재시도 포함)."""
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = SESSION.get(url)
+            response.raise_for_status()
+            return response.text
+        except requests.exceptions.RequestException as e:
+            st.warning(f"재시도 중 ({attempt + 1}/{MAX_RETRIES}): {e}")
+            sleep(2)  # 재시도 전 대기
+    st.error("최대 재시도 횟수를 초과했습니다.")
+    return None
+
 
 def scrape_content_from_links(base_url, links):
     """주어진 링크에서 텍스트 콘텐츠를 추출하는 함수."""
@@ -24,13 +54,13 @@ def scrape_content_from_links(base_url, links):
         page_content = fetch_page_content(full_url)
         if not page_content:
             continue
-        
+
         soup = BeautifulSoup(page_content, 'html.parser')
-        # HTML에서 텍스트를 추출 (필요에 따라 태그를 변경)
         title = soup.title.string if soup.title else "No Title"
         body = soup.get_text(separator='\n').strip()
         scraped_data.append({"url": full_url, "title": title, "content": body})
     return scraped_data
+
 
 def save_to_txt(scraped_data, output_path):
     """크롤링한 데이터를 txt로 저장."""
@@ -41,10 +71,12 @@ def save_to_txt(scraped_data, output_path):
             file.write(f"Content:\n{item['content']}\n")
             file.write("="*50 + "\n")
 
+
 def save_to_json(scraped_data, output_path):
     """크롤링한 데이터를 json으로 저장."""
     with open(output_path, "w", encoding="utf-8") as file:
         json.dump(scraped_data, file, ensure_ascii=False, indent=4)
+
 
 # Streamlit App 시작
 st.title("웹 크롤링 및 데이터 저장")
@@ -54,6 +86,9 @@ base_url = st.text_input("기본 URL을 입력하세요", value="https://example
 link_selector = st.text_input("크롤링할 링크의 CSS 선택자를 입력하세요", value="a")  # 기본은 모든 링크
 
 if st.button("크롤링 시작"):
+    # robots.txt 확인
+    check_robots_txt(base_url)
+
     # HTML 콘텐츠 가져오기
     main_page_content = fetch_page_content(base_url)
     if not main_page_content:
