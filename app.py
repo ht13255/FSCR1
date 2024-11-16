@@ -7,6 +7,7 @@ import json
 import os
 from urllib.parse import urljoin, urlparse
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 # User-Agent 설정
 HEADERS = {
@@ -88,18 +89,21 @@ def crawl_site(base_url, max_pages=100000):
     scraped_data = []
     errors = []
 
-    while to_visit and len(scraped_data) < max_pages:
-        current_url = to_visit.pop(0)
-        if current_url in visited:
-            continue
+    progress_bar = st.progress(0)  # 진행 상황 표시
+    total_to_visit = max_pages  # 전체 목표 페이지 수
 
+    def crawl_single_page(current_url):
+        nonlocal visited, to_visit, scraped_data, errors
+
+        if current_url in visited:
+            return
         visited.add(current_url)
 
         # 현재 페이지 크롤링
         page_content, error = scrape_page_content(current_url)
         if error:
             errors.append((current_url, error))
-            continue
+            return
 
         if page_content:
             scraped_data.append(page_content)
@@ -112,6 +116,16 @@ def crawl_site(base_url, max_pages=100000):
                     if link not in visited and link not in to_visit:
                         to_visit.append(link)
 
+    with ThreadPoolExecutor() as executor:
+        while to_visit and len(scraped_data) < max_pages:
+            current_url = to_visit.pop(0)
+            executor.submit(crawl_single_page, current_url)
+
+            # 진행 상황 업데이트
+            progress = len(scraped_data) / total_to_visit
+            progress_bar.progress(min(1, progress))
+
+    progress_bar.progress(1.0)  # 완료 상태로 표시
     return scraped_data, errors
 
 
