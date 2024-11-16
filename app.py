@@ -26,7 +26,6 @@ EXCLUDED_DOMAINS = [
 MAX_RETRIES = 3
 
 
-# 수정된 주요 함수 및 호출부
 def fetch_page_content(url):
     """주어진 URL의 HTML 콘텐츠를 가져오는 함수."""
     for attempt in range(MAX_RETRIES):
@@ -37,6 +36,37 @@ def fetch_page_content(url):
         except requests.exceptions.RequestException as e:
             return None, str(e)  # 실패 시 (None, 에러 메시지) 반환
     return None, "Unknown error"
+
+
+def clean_text(text):
+    """텍스트에서 날짜 및 불필요한 패턴 제거."""
+    date_patterns = [
+        r"\b\d{4}-\d{2}-\d{2}\b",  # YYYY-MM-DD
+        r"\b\d{2}/\d{2}/\d{4}\b",  # DD/MM/YYYY
+        r"\b\d{1,2} [A-Za-z]+ \d{4}\b"  # DD Month YYYY
+    ]
+    for pattern in date_patterns:
+        text = re.sub(pattern, "", text)
+    return text.strip()
+
+
+def extract_internal_links(base_url, html_content):
+    """HTML 페이지에서 내부 링크만 추출."""
+    soup = BeautifulSoup(html_content, 'html.parser')
+    base_domain = urlparse(base_url).netloc
+
+    all_links = []
+    for a_tag in soup.find_all('a', href=True):
+        href = a_tag['href']
+        full_url = urljoin(base_url, href)
+        parsed_url = urlparse(full_url)
+
+        # 내부 링크만 필터링
+        if parsed_url.netloc == base_domain and not any(excluded in parsed_url.netloc for excluded in EXCLUDED_DOMAINS):
+            all_links.append(full_url)
+
+    # 중복 제거
+    return list(set(all_links))
 
 
 def scrape_page_content(url):
@@ -63,7 +93,6 @@ def crawl_site(base_url, max_pages=100000):
         if current_url in visited:
             continue
 
-        st.info(f"크롤링 중: {current_url}")
         visited.add(current_url)
 
         # 현재 페이지 크롤링
