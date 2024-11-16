@@ -81,7 +81,7 @@ def scrape_page_content(url):
     return {"url": url, "title": title, "content": body}, None
 
 
-def crawl_site(base_url, max_pages=100000000):
+def crawl_site(base_url, max_pages=100000):
     """사이트 전체 크롤링."""
     visited = set()
     to_visit = [base_url]
@@ -132,11 +132,11 @@ def save_to_json(scraped_data, output_path):
 
 
 # Streamlit App 시작
-st.title("내부 링크만 크롤링 및 데이터 저장")
+st.title("내부 링크만 크롤링 및 데이터 저장 (최대 100,000개)")
 
 # 입력
 base_url = st.text_input("기본 URL을 입력하세요", value="https://example.com")
-max_pages = st.number_input("최대 크롤링 페이지 수", min_value=1, max_value=100000000, value=100000000)
+max_pages = st.number_input("최대 크롤링 페이지 수", min_value=1, max_value=100000, value=100000)
 
 if st.button("크롤링 시작"):
     if not base_url:
