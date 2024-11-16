@@ -26,13 +26,23 @@ def load_status():
     return {}
 
 # PDF 저장 함수
-def save_as_pdf(data, output_file):
+def save_as_pdf(results, output_file):
     pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-    for url, content in data.items():
+    for url, data in results.items():
         pdf.cell(200, 10, txt=f"URL: {url}", ln=True, align='L')
-        pdf.multi_cell(0, 10, txt=content)
+        pdf.ln(10)
+        pdf.set_font("Arial", size=10)
+        pdf.multi_cell(0, 10, txt="Links:")
+        for link in data["links"]:
+            pdf.multi_cell(0, 10, txt=link)
+        pdf.ln(5)
+        pdf.set_font("Arial", size=10)
+        pdf.multi_cell(0, 10, txt="Content:")
+        pdf.multi_cell(0, 10, txt=data["content"])
+        pdf.ln(10)
     pdf.output(output_file)
 
 # 크롤링 함수
