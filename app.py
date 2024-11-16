@@ -1,9 +1,7 @@
-# 파일명: streamlit_web_scraper_async.py
+# 파일명: streamlit_web_scraper.py
 
-import asyncio
-import aiohttp
-from aiohttp import ClientSession
 import streamlit as st
+import requests
 from bs4 import BeautifulSoup
 import json
 import os
@@ -24,8 +22,21 @@ EXCLUDED_DOMAINS = [
     "pinterest.com", "youtube.com", "ads.com", "doubleclick.net", "googlesyndication.com"
 ]
 
-# 최대 동시 연결 수
-MAX_CONCURRENT_REQUESTS = 10
+# 최대 재시도 횟수
+MAX_RETRIES = 3
+
+
+def fetch_page_content(url):
+    """주어진 URL의 HTML 콘텐츠를 가져오는 함수."""
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = requests.get(url, headers=HEADERS, timeout=10)
+            response.raise_for_status()
+            return response.text
+        except requests.exceptions.RequestException as e:
+            # st.warning은 함수 내부에서 호출하지 않고, 상위 레벨에서 처리
+            return None
+    return None
 
 
 def clean_text(text):
@@ -59,20 +70,9 @@ def extract_internal_links(base_url, html_content):
     return list(set(all_links))
 
 
-async def fetch_page_content(session, url):
-    """비동기로 HTML 콘텐츠를 가져오는 함수."""
-    try:
-        async with session.get(url, timeout=10) as response:
-            response.raise_for_status()
-            return await response.text()
-    except Exception as e:
-        st.warning(f"URL 요청 실패 ({url}): {e}")
-        return None
-
-
-async def scrape_page_content(session, url):
-    """비동기로 URL에서 텍스트 콘텐츠를 크롤링."""
-    html_content = await fetch_page_content(session, url)
+def scrape_page_content(url):
+    """URL에서 텍스트 콘텐츠를 크롤링."""
+    html_content = fetch_page_content(url)
     if not html_content:
         return None
 
@@ -82,33 +82,32 @@ async def scrape_page_content(session, url):
     return {"url": url, "title": title, "content": body}
 
 
-async def crawl_site(base_url, max_pages=100000000):
-    """사이트 전체를 비동기로 크롤링."""
+def crawl_site(base_url, max_pages=100000000):
+    """사이트 전체 크롤링."""
     visited = set()
     to_visit = [base_url]
     scraped_data = []
 
-    # 비동기 세션 생성
-    async with ClientSession(headers=HEADERS) as session:
-        while to_visit and len(scraped_data) < max_pages:
-            current_batch = to_visit[:MAX_CONCURRENT_REQUESTS]
-            to_visit = to_visit[MAX_CONCURRENT_REQUESTS:]
+    while to_visit and len(scraped_data) < max_pages:
+        current_url = to_visit.pop(0)
+        if current_url in visited:
+            continue
 
-            tasks = [scrape_page_content(session, url) for url in current_batch if url not in visited]
-            results = await asyncio.gather(*tasks)
+        st.info(f"크롤링 중: {current_url}")
+        visited.add(current_url)
 
-            for result in results:
-                if result:
-                    scraped_data.append(result)
-                    visited.add(result["url"])
+        # 현재 페이지 크롤링
+        page_content = scrape_page_content(current_url)
+        if page_content:
+            scraped_data.append(page_content)
 
-                    # 현재 페이지에서 내부 링크 추출
-                    html_content = await fetch_page_content(session, result["url"])
-                    if html_content:
-                        new_links = extract_internal_links(base_url, html_content)
-                        for link in new_links:
-                            if link not in visited and link not in to_visit:
-                                to_visit.append(link)
+            # 현재 페이지에서 내부 링크 추출
+            html_content = fetch_page_content(current_url)
+            if html_content:
+                new_links = extract_internal_links(base_url, html_content)
+                for link in new_links:
+                    if link not in visited and link not in to_visit:
+                        to_visit.append(link)
 
     return scraped_data
 
@@ -120,7 +119,7 @@ def save_to_txt(scraped_data, output_path):
             file.write(f"URL: {item['url']}\n")
             file.write(f"Title: {item['title']}\n")
             file.write(f"Content:\n{item['content']}\n")
-            file.write("=" * 50 + "\n")
+            file.write("="*50 + "\n")
 
 
 def save_to_json(scraped_data, output_path):
@@ -130,7 +129,7 @@ def save_to_json(scraped_data, output_path):
 
 
 # Streamlit App 시작
-st.title("비동기 내부 링크 크롤링 (빠른 속도)")
+st.title("내부 링크만 크롤링 및 데이터 저장 (최대 100,000개)")
 
 # 입력
 base_url = st.text_input("기본 URL을 입력하세요", value="https://example.com")
@@ -142,10 +141,8 @@ if st.button("크롤링 시작"):
     else:
         st.info("크롤링을 시작합니다. 잠시만 기다려주세요...")
 
-        # 비동기 크롤링 실행
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        scraped_data = loop.run_until_complete(crawl_site(base_url, max_pages=max_pages))
+        # 사이트 전체 크롤링
+        scraped_data = crawl_site(base_url, max_pages=max_pages)
 
         if not scraped_data:
             st.warning("크롤링된 데이터가 없습니다.")
