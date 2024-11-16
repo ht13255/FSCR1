@@ -4,7 +4,7 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 import json
-from fpdf import FPDF
+from fpdf import FPDF, HTMLMixin
 import os
 
 # 광고 패턴 설정
@@ -25,25 +25,43 @@ def load_status():
             return json.load(f)
     return {}
 
+# PDF 저장 클래스 (FPDF2 유니코드 지원)
+class PDF(FPDF, HTMLMixin):
+    def header(self):
+        self.set_font("Arial", style="B", size=12)
+        self.cell(0, 10, "크롤링 결과 보고서", border=False, ln=True, align="C")
+        self.ln(10)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font("Arial", size=10)
+        self.cell(0, 10, f"Page {self.page_no()}", align="C")
+
 # PDF 저장 함수
 def save_as_pdf(results, output_file):
-    pdf = FPDF()
+    pdf = PDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
+
     for url, data in results.items():
-        pdf.cell(200, 10, txt=f"URL: {url}", ln=True, align='L')
-        pdf.ln(10)
-        pdf.set_font("Arial", size=10)
-        pdf.multi_cell(0, 10, txt="Links:")
-        for link in data["links"]:
-            pdf.multi_cell(0, 10, txt=link)
+        pdf.set_font("Arial", style="B", size=12)
+        pdf.cell(0, 10, f"URL: {url}", ln=True)
         pdf.ln(5)
+
+        # 링크 추가
         pdf.set_font("Arial", size=10)
-        pdf.multi_cell(0, 10, txt="Content:")
-        pdf.multi_cell(0, 10, txt=data["content"])
+        pdf.cell(0, 10, "Links:", ln=True)
+        for link in data["links"]:
+            pdf.multi_cell(0, 10, link)
+
+        pdf.ln(5)
+
+        # 텍스트 콘텐츠 추가
+        pdf.cell(0, 10, "Content:", ln=True)
+        pdf.multi_cell(0, 10, data["content"])
         pdf.ln(10)
-    pdf.output(output_file)
+
+    pdf.output(output_file, "F")
 
 # 크롤링 함수
 def crawl_url(url):
