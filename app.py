@@ -67,6 +67,11 @@ def generate_css_selector(tag, class_name, id_name):
         selector += f"#{id_name}" if selector else f"#{id_name}"
     return selector
 
+def extract_all_links(soup):
+    """HTML 페이지에서 가능한 모든 링크를 추출."""
+    links = [a.get('href') for a in soup.find_all('a', href=True)]
+    return links
+
 def scrape_content_from_links(base_url, links):
     """주어진 링크에서 텍스트 콘텐츠를 추출."""
     scraped_data = []
@@ -97,7 +102,7 @@ def save_to_json(scraped_data, output_path):
         json.dump(scraped_data, file, ensure_ascii=False, indent=4)
 
 # Streamlit App 시작
-st.title("자동 웹 크롤링 및 데이터 저장")
+st.title("범용 웹 크롤링 및 데이터 저장")
 
 # 입력
 base_url = st.text_input("기본 URL을 입력하세요", value="https://example.com")
@@ -109,21 +114,22 @@ if st.button("크롤링 시작"):
         st.stop()
 
     # HTML 구조 분석
+    soup = BeautifulSoup(main_page_content, 'html.parser')
     most_common_tag, most_common_class, most_common_id = analyze_page_structure(main_page_content)
+    css_selector = generate_css_selector(most_common_tag, most_common_class, most_common_id)
     st.write("**자동으로 선택된 구조**")
     st.write(f"태그: {most_common_tag}, 클래스: {most_common_class}, ID: {most_common_id}")
-
-    # CSS 선택자 생성
-    css_selector = generate_css_selector(most_common_tag, most_common_class, most_common_id)
     st.write(f"**생성된 CSS 선택자:** `{css_selector}`")
 
-    # 링크 수집
-    soup = BeautifulSoup(main_page_content, 'html.parser')
-    links = [a['href'] for a in soup.select(css_selector) if 'href' in a.attrs]
-
+    # 가능한 모든 링크 추출
+    links = soup.select(css_selector) if css_selector else extract_all_links(soup)
     if not links:
-        st.error("자동 선택된 구조에서 링크를 찾을 수 없습니다.")
-        st.stop()
+        st.warning("자동 선택된 구조에서 링크를 찾을 수 없습니다. 모든 링크를 수집합니다.")
+        links = extract_all_links(soup)
+
+    # 중복 제거 및 정리
+    links = list(set(links))
+    st.write(f"**추출된 링크 수:** {len(links)}")
 
     # 데이터 크롤링
     scraped_data = scrape_content_from_links(base_url, links)
