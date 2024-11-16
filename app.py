@@ -7,7 +7,6 @@ import json
 import os
 from urllib.parse import urljoin, urlparse
 import re
-from concurrent.futures import ThreadPoolExecutor
 
 # User-Agent 설정
 HEADERS = {
@@ -33,10 +32,11 @@ def fetch_page_content(url):
         try:
             response = requests.get(url, headers=HEADERS, timeout=10)
             response.raise_for_status()
-            return response.text, None  # 성공 시 (HTML 콘텐츠, None) 반환
+            return response.text
         except requests.exceptions.RequestException as e:
-            return None, str(e)  # 실패 시 (None, 에러 메시지) 반환
-    return None, "Unknown error"
+            # 상태 메시지는 상위 호출부에서 처리
+            return None
+    return None
 
 
 def clean_text(text):
@@ -72,14 +72,14 @@ def extract_internal_links(base_url, html_content):
 
 def scrape_page_content(url):
     """URL에서 텍스트 콘텐츠를 크롤링."""
-    html_content, error = fetch_page_content(url)
+    html_content = fetch_page_content(url)
     if not html_content:
-        return None, error
+        return None
 
     soup = BeautifulSoup(html_content, 'html.parser')
     title = soup.title.string if soup.title else "No Title"
     body = clean_text(soup.get_text(separator='\n').strip())
-    return {"url": url, "title": title, "content": body}, None
+    return {"url": url, "title": title, "content": body}
 
 
 def crawl_site(base_url, max_pages=100000):
@@ -87,46 +87,30 @@ def crawl_site(base_url, max_pages=100000):
     visited = set()
     to_visit = [base_url]
     scraped_data = []
-    errors = []
 
-    progress_bar = st.progress(0)  # 진행 상황 표시
-    total_to_visit = max_pages  # 전체 목표 페이지 수
-
-    def crawl_single_page(current_url):
-        nonlocal visited, to_visit, scraped_data, errors
-
+    while to_visit and len(scraped_data) < max_pages:
+        current_url = to_visit.pop(0)
         if current_url in visited:
-            return
+            continue
+
+        # Streamlit 상태 메시지는 호출부에서만 실행
+        st.info(f"크롤링 중: {current_url}")
         visited.add(current_url)
 
         # 현재 페이지 크롤링
-        page_content, error = scrape_page_content(current_url)
-        if error:
-            errors.append((current_url, error))
-            return
-
+        page_content = scrape_page_content(current_url)
         if page_content:
             scraped_data.append(page_content)
 
             # 현재 페이지에서 내부 링크 추출
-            html_content, _ = fetch_page_content(current_url)
+            html_content = fetch_page_content(current_url)
             if html_content:
                 new_links = extract_internal_links(base_url, html_content)
                 for link in new_links:
                     if link not in visited and link not in to_visit:
                         to_visit.append(link)
 
-    with ThreadPoolExecutor() as executor:
-        while to_visit and len(scraped_data) < max_pages:
-            current_url = to_visit.pop(0)
-            executor.submit(crawl_single_page, current_url)
-
-            # 진행 상황 업데이트
-            progress = len(scraped_data) / total_to_visit
-            progress_bar.progress(min(1, progress))
-
-    progress_bar.progress(1.0)  # 완료 상태로 표시
-    return scraped_data, errors
+    return scraped_data
 
 
 def save_to_txt(scraped_data, output_path):
@@ -159,7 +143,7 @@ if st.button("크롤링 시작"):
         st.info("크롤링을 시작합니다. 잠시만 기다려주세요...")
 
         # 사이트 전체 크롤링
-        scraped_data, errors = crawl_site(base_url, max_pages=max_pages)
+        scraped_data = crawl_site(base_url, max_pages=max_pages)
 
         if not scraped_data:
             st.warning("크롤링된 데이터가 없습니다.")
@@ -177,9 +161,3 @@ if st.button("크롤링 시작"):
             st.write("크롤링된 데이터 (최대 5개 미리보기):", scraped_data[:5])
             st.download_button("TXT 파일 다운로드", open(txt_path, "rb"), "scraped_data.txt")
             st.download_button("JSON 파일 다운로드", open(json_path, "rb"), "scraped_data.json")
-
-        # 에러 로그 출력
-        if errors:
-            st.warning(f"크롤링 중 {len(errors)}개의 URL에서 오류가 발생했습니다.")
-            st.write("오류 목록:")
-            st.write(errors)
