@@ -7,6 +7,9 @@ import json
 import os
 from time import sleep
 from collections import Counter
+from PIL import Image, ImageOps
+from io import BytesIO
+import re
 from urllib.parse import urlparse
 
 # User-Agent 설정
@@ -104,8 +107,32 @@ def filter_links(base_url, links):
     
     return filtered_links
 
+def clean_text(text):
+    """텍스트에서 날짜 및 불필요한 패턴 제거."""
+    # 날짜 패턴 (YYYY-MM-DD, DD/MM/YYYY 등)
+    date_patterns = [
+        r"\b\d{4}-\d{2}-\d{2}\b",  # YYYY-MM-DD
+        r"\b\d{2}/\d{2}/\d{4}\b",  # DD/MM/YYYY
+        r"\b\d{1,2} [A-Za-z]+ \d{4}\b"  # DD Month YYYY
+    ]
+    for pattern in date_patterns:
+        text = re.sub(pattern, "", text)
+    return text.strip()
+
+def process_image(image_url):
+    """이미지 다운로드 후 빈칸을 제거."""
+    try:
+        response = requests.get(image_url)
+        response.raise_for_status()
+        img = Image.open(BytesIO(response.content))
+        img = ImageOps.crop(img)  # 이미지의 빈칸 제거
+        return img
+    except Exception as e:
+        st.warning(f"이미지를 처리할 수 없습니다: {e}")
+        return None
+
 def scrape_content_from_links(base_url, links):
-    """주어진 링크에서 텍스트 콘텐츠를 추출."""
+    """주어진 링크에서 텍스트 및 이미지를 크롤링."""
     scraped_data = []
     for link in links:
         full_url = base_url + link if link.startswith('/') else link
@@ -114,13 +141,27 @@ def scrape_content_from_links(base_url, links):
             continue
 
         soup = BeautifulSoup(page_content, 'html.parser')
+
+        # 텍스트 데이터 처리
         title = soup.title.string if soup.title else "No Title"
-        body = soup.get_text(separator='\n').strip()
-        scraped_data.append({"url": full_url, "title": title, "content": body})
+        body = clean_text(soup.get_text(separator='\n').strip())
+
+        # 이미지 처리
+        images = soup.find_all('img', src=True)
+        processed_images = [
+            process_image(img['src']) for img in images if img['src']
+        ]
+
+        scraped_data.append({
+            "url": full_url,
+            "title": title,
+            "content": body,
+            "images": processed_images
+        })
     return scraped_data
 
 def save_to_txt(scraped_data, output_path):
-    """크롤링한 데이터를 txt로 저장."""
+    """크롤링한 텍스트 데이터를 txt로 저장."""
     with open(output_path, "w", encoding="utf-8") as file:
         for item in scraped_data:
             file.write(f"URL: {item['url']}\n")
@@ -134,7 +175,7 @@ def save_to_json(scraped_data, output_path):
         json.dump(scraped_data, file, ensure_ascii=False, indent=4)
 
 # Streamlit App 시작
-st.title("SNS 제외 웹 크롤링 및 데이터 저장")
+st.title("날짜 제거 및 이미지 처리 웹 크롤링")
 
 # 입력
 base_url = st.text_input("기본 URL을 입력하세요", value="https://example.com")
