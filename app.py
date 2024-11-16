@@ -7,8 +7,6 @@ import json
 import os
 from time import sleep
 from collections import Counter
-from PIL import Image, ImageOps
-from io import BytesIO
 import re
 from urllib.parse import urlparse
 
@@ -119,20 +117,8 @@ def clean_text(text):
         text = re.sub(pattern, "", text)
     return text.strip()
 
-def process_image(image_url):
-    """이미지 다운로드 후 빈칸을 제거."""
-    try:
-        response = requests.get(image_url)
-        response.raise_for_status()
-        img = Image.open(BytesIO(response.content))
-        img = ImageOps.crop(img)  # 이미지의 빈칸 제거
-        return img
-    except Exception as e:
-        st.warning(f"이미지를 처리할 수 없습니다: {e}")
-        return None
-
 def scrape_content_from_links(base_url, links):
-    """주어진 링크에서 텍스트 및 이미지를 크롤링."""
+    """주어진 링크에서 텍스트 콘텐츠를 크롤링."""
     scraped_data = []
     for link in links:
         full_url = base_url + link if link.startswith('/') else link
@@ -146,17 +132,10 @@ def scrape_content_from_links(base_url, links):
         title = soup.title.string if soup.title else "No Title"
         body = clean_text(soup.get_text(separator='\n').strip())
 
-        # 이미지 처리
-        images = soup.find_all('img', src=True)
-        processed_images = [
-            process_image(img['src']) for img in images if img['src']
-        ]
-
         scraped_data.append({
             "url": full_url,
             "title": title,
-            "content": body,
-            "images": processed_images
+            "content": body
         })
     return scraped_data
 
@@ -175,7 +154,7 @@ def save_to_json(scraped_data, output_path):
         json.dump(scraped_data, file, ensure_ascii=False, indent=4)
 
 # Streamlit App 시작
-st.title("날짜 제거 및 이미지 처리 웹 크롤링")
+st.title("텍스트만 크롤링 및 데이터 저장")
 
 # 입력
 base_url = st.text_input("기본 URL을 입력하세요", value="https://example.com")
