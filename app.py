@@ -82,7 +82,7 @@ async def scrape_page_content(session, url):
     return {"url": url, "title": title, "content": body}
 
 
-async def crawl_site(base_url, max_pages=100000):
+async def crawl_site(base_url, max_pages=100000000):
     """사이트 전체를 비동기로 크롤링."""
     visited = set()
     to_visit = [base_url]
@@ -134,7 +134,7 @@ st.title("비동기 내부 링크 크롤링 (빠른 속도)")
 
 # 입력
 base_url = st.text_input("기본 URL을 입력하세요", value="https://example.com")
-max_pages = st.number_input("최대 크롤링 페이지 수", min_value=1, max_value=100000, value=100000)
+max_pages = st.number_input("최대 크롤링 페이지 수", min_value=1, max_value=100000000, value=100000000)
 
 if st.button("크롤링 시작"):
     if not base_url:
