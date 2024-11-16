@@ -4,7 +4,7 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 import json
-from fpdf import FPDF, HTMLMixin
+from fpdf import FPDF
 import os
 
 # 광고 패턴 설정
@@ -25,40 +25,27 @@ def load_status():
             return json.load(f)
     return {}
 
-# PDF 저장 클래스 (FPDF2 유니코드 지원)
-class PDF(FPDF, HTMLMixin):
-    def header(self):
-        self.set_font("Arial", style="B", size=12)
-        self.cell(0, 10, "크롤링 결과 보고서", border=False, ln=True, align="C")
-        self.ln(10)
-
-    def footer(self):
-        self.set_y(-15)
-        self.set_font("Arial", size=10)
-        self.cell(0, 10, f"Page {self.page_no()}", align="C")
-
-# PDF 저장 함수
+# PDF 저장 함수 (FPDF2로 유니코드 지원)
 def save_as_pdf(results, output_file):
-    pdf = PDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf = FPDF()
     pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_font("Arial", fname="", uni=True)  # 유니코드 폰트 추가
+    pdf.set_font("Arial", size=12)
 
     for url, data in results.items():
-        pdf.set_font("Arial", style="B", size=12)
-        pdf.cell(0, 10, f"URL: {url}", ln=True)
+        pdf.set_font("Arial", size=12, style="B")
+        pdf.cell(0, 10, txt=f"URL: {url}", ln=True)
         pdf.ln(5)
 
-        # 링크 추가
         pdf.set_font("Arial", size=10)
-        pdf.cell(0, 10, "Links:", ln=True)
+        pdf.cell(0, 10, txt="Links:", ln=True)
         for link in data["links"]:
-            pdf.multi_cell(0, 10, link)
+            pdf.multi_cell(0, 10, txt=link)
 
         pdf.ln(5)
-
-        # 텍스트 콘텐츠 추가
-        pdf.cell(0, 10, "Content:", ln=True)
-        pdf.multi_cell(0, 10, data["content"])
+        pdf.cell(0, 10, txt="Content:", ln=True)
+        pdf.multi_cell(0, 10, txt=data["content"])
         pdf.ln(10)
 
     pdf.output(output_file, "F")
@@ -76,7 +63,6 @@ def crawl_url(url):
         return filtered_links, soup.get_text()
     except requests.exceptions.RequestException as e:
         st.warning(f"HTTP 요청 실패: {e}. 우회 방식으로 시도합니다.")
-        # 우회 방식 (BeautifulSoup을 HTML 파일로 파싱)
         try:
             response = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
             soup = BeautifulSoup(response.content, "html.parser")
