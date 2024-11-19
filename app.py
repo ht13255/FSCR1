@@ -1,163 +1,166 @@
-# 파일명: streamlit_web_scraper.py
-
-import streamlit as st
-import requests
-from bs4 import BeautifulSoup
-import json
 import os
-from urllib.parse import urljoin, urlparse
-import re
-
-# User-Agent 설정
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36"
-    )
-}
-
-# 제외할 도메인 패턴 (SNS 및 광고 등)
-EXCLUDED_DOMAINS = [
-    "instagram.com", "twitter.com", "facebook.com", "linkedin.com",
-    "pinterest.com", "youtube.com", "ads.com", "doubleclick.net", "googlesyndication.com"
-]
-
-# 최대 재시도 횟수
-MAX_RETRIES = 3
+import pandas as pd
+import numpy as np
+import cv2
+from pytube import YouTube
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.options import Options
+import tensorflow as tf
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, roc_auc_score
+import matplotlib.pyplot as plt
+import seaborn as sns
+from deepLabCut import analyze_videos
+from openpose import OpenPose
 
 
-def fetch_page_content(url):
-    """주어진 URL의 HTML 콘텐츠를 가져오는 함수."""
-    for attempt in range(MAX_RETRIES):
-        try:
-            response = requests.get(url, headers=HEADERS, timeout=10)
-            response.raise_for_status()
-            return response.text
-        except requests.exceptions.RequestException as e:
-            # 상태 메시지는 상위 호출부에서 처리
-            return None
-    return None
+# 1. YouTube에서 선수 하이라이트 검색 및 다운로드
+def download_highlight(player_name: str, output_dir: str = "./match_videos/") -> str:
+    """YouTube에서 선수 하이라이트 영상을 검색하고 다운로드."""
+    search_query = f"{player_name} highlights football"
+    print(f"'{search_query}' YouTube 검색 중...")
+
+    # Selenium 설정
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    driver = webdriver.Chrome(service=Service(), options=chrome_options)
+
+    try:
+        # YouTube 검색
+        driver.get(f"https://www.youtube.com/results?search_query={search_query}")
+        video_elements = driver.find_elements(By.ID, "video-title")
+        first_video_url = video_elements[0].get_attribute("href")
+        print(f"다운로드할 URL: {first_video_url}")
+
+        # YouTube 다운로드
+        yt = YouTube(first_video_url)
+        video_stream = yt.streams.filter(file_extension="mp4").first()
+        output_path = os.path.join(output_dir, f"{player_name}_highlight.mp4")
+        video_stream.download(output_path=output_path)
+        print(f"'{player_name}' 하이라이트 다운로드 완료: {output_path}")
+        return output_path
+
+    finally:
+        driver.quit()
 
 
-def clean_text(text):
-    """텍스트에서 날짜 및 불필요한 패턴 제거."""
-    date_patterns = [
-        r"\b\d{4}-\d{2}-\d{2}\b",  # YYYY-MM-DD
-        r"\b\d{2}/\d{2}/\d{4}\b",  # DD/MM/YYYY
-        r"\b\d{1,2} [A-Za-z]+ \d{4}\b"  # DD Month YYYY
-    ]
-    for pattern in date_patterns:
-        text = re.sub(pattern, "", text)
-    return text.strip()
+# 2. Whoscored에서 선수 스탯 검색
+def collect_stats_from_whoscored(player_name: str) -> pd.DataFrame:
+    """Whoscored에서 선수 데이터를 검색 및 수집."""
+    print(f"'{player_name}'의 Whoscored 데이터를 검색 중...")
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    driver = webdriver.Chrome(service=Service(), options=chrome_options)
+
+    try:
+        # Whoscored 검색
+        driver.get("https://www.whoscored.com/")
+        search_box = driver.find_element(By.NAME, "search")
+        search_box.send_keys(player_name)
+        search_box.send_keys(Keys.RETURN)
+
+        # 첫 번째 검색 결과 클릭
+        driver.implicitly_wait(5)
+        first_result = driver.find_element(By.CSS_SELECTOR, "a.result-link")
+        first_result.click()
+
+        # 스탯 데이터 크롤링
+        driver.implicitly_wait(5)
+        stats_table = driver.find_element(By.ID, "player-statistics")
+        stats_html = stats_table.get_attribute("outerHTML")
+        stats_data = pd.read_html(stats_html)[0]
+        print(f"'{player_name}'의 스탯 데이터 수집 완료.")
+        return stats_data
+
+    finally:
+        driver.quit()
 
 
-def extract_internal_links(base_url, html_content):
-    """HTML 페이지에서 내부 링크만 추출."""
-    soup = BeautifulSoup(html_content, 'html.parser')
-    base_domain = urlparse(base_url).netloc
-
-    all_links = []
-    for a_tag in soup.find_all('a', href=True):
-        href = a_tag['href']
-        full_url = urljoin(base_url, href)
-        parsed_url = urlparse(full_url)
-
-        # 내부 링크만 필터링
-        if parsed_url.netloc == base_domain and not any(excluded in parsed_url.netloc for excluded in EXCLUDED_DOMAINS):
-            all_links.append(full_url)
-
-    # 중복 제거
-    return list(set(all_links))
+# 3. 영상 분석 기능
+def analyze_video_with_deeplabcut(video_path: str):
+    """DeepLabCut으로 영상 내 객체 검출."""
+    analyze_videos(video_path)
+    print(f"DeepLabCut 분석 완료: {video_path}")
 
 
-def scrape_page_content(url):
-    """URL에서 텍스트 콘텐츠를 크롤링."""
-    html_content = fetch_page_content(url)
-    if not html_content:
-        return None
-
-    soup = BeautifulSoup(html_content, 'html.parser')
-    title = soup.title.string if soup.title else "No Title"
-    body = clean_text(soup.get_text(separator='\n').strip())
-    return {"url": url, "title": title, "content": body}
+def analyze_video_with_openpose(video_path: str):
+    """OpenPose를 활용하여 행동 분석."""
+    pose_model = OpenPose(model_path="./models/openpose/")
+    keypoints = pose_model.analyze(video_path)
+    return keypoints
 
 
-def crawl_site(base_url, max_pages=100000):
-    """사이트 전체 크롤링."""
-    visited = set()
-    to_visit = [base_url]
-    scraped_data = []
-
-    while to_visit and len(scraped_data) < max_pages:
-        current_url = to_visit.pop(0)
-        if current_url in visited:
-            continue
-
-        # Streamlit 상태 메시지는 호출부에서만 실행
-        st.info(f"크롤링 중: {current_url}")
-        visited.add(current_url)
-
-        # 현재 페이지 크롤링
-        page_content = scrape_page_content(current_url)
-        if page_content:
-            scraped_data.append(page_content)
-
-            # 현재 페이지에서 내부 링크 추출
-            html_content = fetch_page_content(current_url)
-            if html_content:
-                new_links = extract_internal_links(base_url, html_content)
-                for link in new_links:
-                    if link not in visited and link not in to_visit:
-                        to_visit.append(link)
-
-    return scraped_data
+# 4. 스탯 분석 기능
+def calculate_performance_metrics(stats_data: pd.DataFrame) -> pd.DataFrame:
+    """성능 지표 계산."""
+    stats_data['pass_success_rate'] = stats_data['successful_passes'] / stats_data['total_passes']
+    stats_data['goal_contribution'] = stats_data['goals'] + stats_data['assists']
+    return stats_data
 
 
-def save_to_txt(scraped_data, output_path):
-    """크롤링한 데이터를 txt로 저장."""
-    with open(output_path, "w", encoding="utf-8") as file:
-        for item in scraped_data:
-            file.write(f"URL: {item['url']}\n")
-            file.write(f"Title: {item['title']}\n")
-            file.write(f"Content:\n{item['content']}\n")
-            file.write("="*50 + "\n")
+def expected_goals_model(stats_data: pd.DataFrame) -> pd.DataFrame:
+    """기대 득점 모델 구축."""
+    xg_model = RandomForestClassifier()
+    features = stats_data[['shot_distance', 'shot_angle', 'pressure']]
+    labels = stats_data['goal']
+    X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2)
+    xg_model.fit(X_train, y_train)
+    stats_data['expected_goals'] = xg_model.predict_proba(features)[:, 1]
+    return stats_data
 
 
-def save_to_json(scraped_data, output_path):
-    """크롤링한 데이터를 json으로 저장."""
-    with open(output_path, "w", encoding="utf-8") as file:
-        json.dump(scraped_data, file, ensure_ascii=False, indent=4)
+# 5. 시각화 및 보고서 생성
+def visualize_stats(stats_data: pd.DataFrame):
+    """스탯 데이터 시각화."""
+    plt.figure(figsize=(10, 6))
+    sns.barplot(x='player', y='goal_contribution', data=stats_data)
+    plt.title("선수별 경기 기여도")
+    plt.xlabel("선수")
+    plt.ylabel("경기 기여도")
+    plt.show()
 
 
-# Streamlit App 시작
-st.title("내부 링크만 크롤링 및 데이터 저장 (최대 100,000개)")
+def generate_report(player_name: str, stats_data: pd.DataFrame):
+    """선수의 장단점 및 미래 잠재력 평가 보고서 생성."""
+    player_data = stats_data[stats_data['player'] == player_name]
+    current_rating = player_data['current_rating'].values[0]
+    potential_rating = player_data['potential_rating'].values[0]
+    strengths = player_data[['strengths']].values[0]
+    weaknesses = player_data[['weaknesses']].values[0]
+    print(f"""
+    선수: {player_name}
+    현재 능력: {current_rating}
+    잠재력: {potential_rating}
+    장점: {strengths}
+    약점: {weaknesses}
+    """)
 
-# 입력
-base_url = st.text_input("기본 URL을 입력하세요", value="https://example.com")
-max_pages = st.number_input("최대 크롤링 페이지 수", min_value=1, max_value=100000, value=100000)
 
-if st.button("크롤링 시작"):
-    if not base_url:
-        st.error("기본 URL을 입력하세요.")
-    else:
-        st.info("크롤링을 시작합니다. 잠시만 기다려주세요...")
+# 메인 실행
+if __name__ == "__main__":
+    # 선수 이름 입력
+    player_name = input("분석할 선수 이름을 입력하세요: ")
 
-        # 사이트 전체 크롤링
-        scraped_data = crawl_site(base_url, max_pages=max_pages)
+    # 1. YouTube 하이라이트 다운로드
+    video_path = download_highlight(player_name)
 
-        if not scraped_data:
-            st.warning("크롤링된 데이터가 없습니다.")
-        else:
-            # 데이터 저장
-            os.makedirs("output", exist_ok=True)
-            txt_path = os.path.join("output", "scraped_data.txt")
-            json_path = os.path.join("output", "scraped_data.json")
-            save_to_txt(scraped_data, txt_path)
-            save_to_json(scraped_data, json_path)
+    # 2. 영상 분석
+    analyze_video_with_deeplabcut(video_path)
+    keypoints = analyze_video_with_openpose(video_path)
 
-            # 결과 표시
-            st.success("크롤링 완료!")
-            st.write(f"크롤링된 페이지 수: {len(scraped_data)}")
-            st.write("크롤링된 데이터 (최대 5개 미리보기):", scraped_data[:5])
-            st.download_button("TXT 파일 다운로드", open(txt_path, "rb"), "scraped_data.txt")
-            st.download_button("JSON 파일 다운로드", open(json_path, "rb"), "scraped_data.json")
+    # 3. Whoscored 스탯 데이터 수집 및 분석
+    stats_data = collect_stats_from_whoscored(player_name)
+    stats_with_metrics = calculate_performance_metrics(stats_data)
+    stats_with_xg = expected_goals_model(stats_with_metrics)
+
+    # 4. 시각화 및 보고서 생성
+    visualize_stats(stats_with_xg)
+    generate_report(player_name, stats_with_xg)
